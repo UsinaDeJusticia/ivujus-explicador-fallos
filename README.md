@@ -1,132 +1,105 @@
-# IVUJUS — Explicador de fallos
+# IVUJUS — Explicador de fallos (100% en el navegador)
 
-App **Next.js (App Router) + TypeScript** que explica fallos y documentos judiciales en lenguaje sencillo. Nace como versión curada del Space de Hugging Face `ejaircastillo/ivujus-explicador-fallos`, pensada para Vercel y para que **otra página** consuma la misma API.
+Explica fallos judiciales en lenguaje sencillo **sin enviar el documento a ningún servidor de IA**. El LLM corre en el cliente con **WebLLM** (`@mlc-ai/web-llm`) sobre **WebGPU**, en un Web Worker.
 
-> El Space de Hugging Face **no se modifica** con este repo.
+Export estático (`output: "export"`).
 
-## Qué hace
+## Arquitectura y privacidad
 
-1. Subís un PDF (o mandás el texto ya extraído).
-2. El servidor resume en una frase qué trata el documento (OpenRouter vía Vercel AI SDK).
-3. Podés usar botones de ayuda rápida o chatear con el fallo como contexto.
-4. Descargás la explicación en PDF con tildes y ñ (fuente Noto Sans embebida).
+1. Subís un PDF → texto extraído **en memoria** (`unpdf`).
+2. **Reducción de datos personales** (no es anonimización total): reglas argentinas + NER opcional. **Vista previa editable obligatoria** antes del modelo.
+3. El modelo local solo ve el texto ya reducido.
+4. El PDF de salida se genera en el cliente (`pdf-lib` + Noto Sans).
+5. **No** usamos `localStorage`, `sessionStorage` ni IndexedDB para el fallo ni el chat. «Borrar todo» + `beforeunload`/`pagehide` limpian estado y terminan el worker.
+6. **Única caché permitida:** pesos del modelo / NER en Cache Storage del navegador (WebLLM / transformers.js). No incluye tu documento.
 
-La clave de OpenRouter vive **solo en el servidor**. No se pide en la UI.
+No hay `/api/*`, OpenRouter, AI SDK de servidor, CORS ni rate limit.
+
+### Reducción de datos (reglas)
+
+- DNI, **CUIT/CUIL con dígito verificador**, teléfonos, emails
+- Expedientes/causas, patentes
+- Matrículas **MN/MP**, **historia clínica**, **legajo**
+- Domicilios (calle/av) y catastro **B° / Mz / Lote**
+- **Cuasi-identificadores:** fechas → mes/año; edades → rangos de 5 años
+- Heurísticas de personas (roles, Sr./Sra., mayúsculas)
+
+### NER opcional (transformers.js)
+
+Interfaz `NerEngine` con:
+
+- `RulesOnlyNer` (default, siempre disponible)
+- `TransformersNer` (`@huggingface/transformers`, ONNX/WASM, sin GPU), modelo `Xenova/bert-base-multilingual-cased-ner-hrl`
+
+Se activa con `new Explicador({ enableNer: true })`. Si la carga falla, cae a solo reglas. La primera vez descarga decenas de MB desde Hugging Face (solo el modelo NER, no tu PDF).
 
 ## Requisitos
 
-- Node.js 22+
-- pnpm 10+
-- `OPENROUTER_API_KEY` para rutas que llaman al modelo
+- Navegador con **WebGPU** (Chrome/Edge recientes).
+- Modelo default ≈ **980 MB**: `Qwen3-1.7B-q4f16_1-MLC`.
+- Opción liviana ≈ **347 MB**: `Qwen3-0.6B-q4f16_1-MLC`.
+- Sin WebGPU: aviso claro y **cero envíos**.
 
 ## Cómo correrlo
 
 ```bash
 pnpm install
-cp .env.example .env.local
-# completá OPENROUTER_API_KEY (y opcionalmente EXPLICADOR_MODEL / ALLOWED_ORIGINS)
 pnpm dev
+pnpm verify   # lint + typecheck + test + build → /out
 ```
 
-Verificación local:
+## Integración (API de cliente)
 
-```bash
-pnpm verify   # lint + typecheck + test + build
+```ts
+import { Explicador } from "@/lib/explicador";
+import { useExplicador } from "@/hooks/useExplicador";
+
+const engine = new Explicador({
+  modelId: "Qwen3-1.7B-q4f16_1-MLC",
+  enableNer: false, // true para NER transformers.js
+});
+await engine.loadModel((p) => console.log(p.text));
+const reduced = await engine.ingestPdf(file);
+// el usuario revisa reduced.text / reduced.lexicon
+engine.confirmAnonymizedText(reduced.text, reduced.lexicon);
+await engine.summarizeConfirmed();
+await engine.ask({ action: "resumen" });
+const pdf = await engine.exportPdf();
+await engine.clearAll();
 ```
 
-## Variables de entorno
+Adaptador `LlmProvider` deja la puerta a un futuro modo servidor **con consentimiento explícito** (`ServerProviderNotImplemented`). No está implementado.
 
-| Nombre | Uso |
-|---|---|
-| `OPENROUTER_API_KEY` | API key de OpenRouter (obligatoria en servidor) |
-| `EXPLICADOR_MODEL` | Id OpenRouter; default `mistralai/mistral-nemo` |
-| `ALLOWED_ORIGINS` | Lista CSV de orígenes CORS (o `*` en desarrollo) |
+## CSP / headers (`vercel.json`)
 
-## Contratos de la API
+- `connect-src`: Hugging Face / CDN LFS + `raw.githubusercontent.com` (pesos WebLLM + wasm MLC + opcional NER).
+- Sin analytics.
+- `worker-src 'self' blob:`; `script-src` con `'wasm-unsafe-eval'`.
 
-Base: misma origin o CORS según `ALLOWED_ORIGINS`. Rate limit simple por IP (~30 req/min).
+## Modelos
 
-### `POST /api/explicar`
+| Id | Rol | Descarga aprox. |
+|---|---|---|
+| `Qwen3-1.7B-q4f16_1-MLC` | **Default** | ~980 MB |
+| `Qwen3-0.6B-q4f16_1-MLC` | Liviano | ~347 MB |
+| `Qwen2.5-1.5B-Instruct-q4f16_1-MLC` | Alternativa | ~900 MB |
+| `Llama-3.2-3B-Instruct-q4f16_1-MLC` | Más calidad | ~1,8 GB |
 
-- **multipart/form-data** con campo `file` (PDF), o
-- **JSON** `{ "text": "..." }`
+## Límites de calidad
 
-Respuesta `200`:
+- La reducción puede tapar de más o de menos: por eso la revisión manual es obligatoria.
+- Modelos chicos pueden fallar en textos jurídicos densos.
+- PDFs escaneados sin OCR no aportan texto.
+- Fallos largos: resumen por chunks + síntesis.
 
-```json
-{
-  "text": "texto extraído (posible truncado)",
-  "truncated": false,
-  "pageCount": 3,
-  "summary": "frase simple",
-  "welcome": "He leído el documento..."
-}
-```
+## Portado / reemplazado / descartado
 
-### `POST /api/chat`
+**Portado:** flujo PDF → explicación → botones → chat → PDF; tono IVUJUS.
 
-JSON:
+**Reemplazado:** OpenRouter/servidor → WebLLM local; API HTTP → `Explicador` / `useExplicador`; extracción/generación PDF 100% cliente; “anonimizar” → **reducción de datos personales** con preview.
 
-```json
-{
-  "pdfText": "...",
-  "messages": [{ "role": "user", "content": "..." }],
-  "action": "resumen | pasos | glosario | contacto | custom",
-  "prompt": "opcional si action=custom"
-}
-```
-
-- `action=contacto` → JSON estático (sin LLM).
-- resto → **stream de texto** (`text/plain` stream vía AI SDK) o JSON si es estático.
-
-### `POST /api/pdf`
-
-JSON `{ "text": "...", "title": "opcional" }` → PDF (`application/pdf`).
-
-## Integración desde otra página
-
-La lógica reutilizable está en `src/lib/` (`explicador.ts`, `pdf-extract.ts`, `pdf-generate.ts`, `prompts.ts`, `llm.ts`). La UI de este repo es mínima y solo llama a las rutas `/api/*`. Tu página puede:
-
-1. Llamar a estos endpoints por HTTP (recomendado con `ALLOWED_ORIGINS`), o
-2. Importar los módulos de `src/lib` si vivís en el mismo monorepo.
-
-## Modelo default
-
-Verificado contra `https://openrouter.ai/api/v1/models` el 2026-11-09:
-
-- **`mistralai/mistral-nemo`** — económico (~USD 0.03 / M tokens), contexto 131k, buen español.
-- Se puede cambiar con `EXPLICADOR_MODEL` sin redeploy de código (solo env).
-
-## Portado / reemplazado / descartado (vs Space)
-
-**Portado**
-
-- Flujo PDF → resumen → botones → chat → descarga PDF
-- Tono IVUJUS y “regla de la brújula”
-- Acciones rápidas (resumen, pasos, glosario, contacto humano)
-
-**Reemplazado**
-
-- Streamlit → Next.js App Router + TypeScript + pnpm
-- Groq + `llama-3.3-70b-versatile` (retirado) → Vercel AI SDK + OpenRouter (`EXPLICADOR_MODEL`)
-- PyPDF2 → `unpdf`
-- fpdf (latin-1) → `pdf-lib` + Noto Sans (Unicode)
-- Key en sidebar → solo `OPENROUTER_API_KEY` de servidor
-- Deps sin pin → lockfile pnpm + CI
-
-**Descartado**
-
-- Dockerfile fantasma del template HF
-- Input de API key en la UI
-- Hugging Face Spaces / secrets del Space
-- Deploy automático (este repo no crea proyecto Vercel)
-
+**Descartado:** OpenRouter, AI SDK server, `/api/*`, CORS, rate limit, keys en UI, Dockerfile HF.
 
 ## CI
 
-El workflow de GitHub Actions está en `docs/ci-workflow.yml` (lint, typecheck, test, build).
-Para activarlo: mové ese archivo a `.github/workflows/ci.yml` desde la UI de GitHub o con un token que tenga scope `workflow`.
-
-## Licencia
-
-Uso interno Usina de Justicia / IVUJUS.
+Plantilla en `docs/ci-workflow.yml` (mover a `.github/workflows/` con scope `workflow`).

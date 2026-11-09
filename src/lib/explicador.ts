@@ -1,131 +1,220 @@
-import { INTRO_TEXT_CHARS } from "./config";
+import {
+  anonymizeTextAsync,
+  deanonymizeText,
+  type AnonymizeResult,
+} from "./anonymize";
+import type { NerEngine } from "./ner/types";
+import { RulesOnlyNer } from "./ner/rules-only";
+import { tryCreateTransformersNer } from "./ner/transformers-ner";
+import {
+  buildChunkSummaryPrompt,
+  buildSynthesisPrompt,
+  chunkText,
+} from "./chunking";
+import { DEFAULT_MODEL_ID } from "./models";
+import { extractPdfText } from "./pdf-extract";
+import { buildExplanationPdf } from "./pdf-generate";
 import {
   QUICK_ACTIONS,
+  SYSTEM_PROMPT,
+  introPrompt,
   welcomeMessage,
   type QuickAction,
 } from "./prompts";
 import {
-  generateExplanation,
-  summarizeDocument,
-  streamExplanation,
-  type LlmTextFn,
-} from "./llm";
-import { extractPdfText, PdfExtractError } from "./pdf-extract";
-import { buildExplanationPdf } from "./pdf-generate";
-import type { ChatMessage } from "./schemas";
-import type { ModelMessage } from "ai";
+  attachUnloadCleanup,
+  createEmptySession,
+  wipeSession,
+  type ChatTurn,
+  type SessionState,
+} from "./session";
+import { checkWebGpu } from "./webgpu";
+import type { LlmProvider, LoadProgress } from "./llm/types";
+import { WebLlmProvider } from "./llm/webllm-provider";
 
-export { PdfExtractError, QUICK_ACTIONS };
-export type { QuickAction };
+export type ExplicadorOptions = {
+  modelId?: string;
+  provider?: LlmProvider;
+  /** Si true, intenta reponer placeholders en la respuesta (solo memoria). */
+  deanonymizeOutput?: boolean;
+  /**
+   * Intentá cargar NER con transformers.js (ONNX). Si falla, queda solo reglas.
+   * Default false para no hinchar la primera carga.
+   */
+  enableNer?: boolean;
+};
 
-function toModelMessages(messages: ChatMessage[]): ModelMessage[] {
-  return messages
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }));
-}
+/**
+ * API programática para integrar desde otra página (mismo origen / bundler).
+ * Todo corre en el cliente; no hay llamadas a servidores de IA.
+ */
+export class Explicador {
+  private session: SessionState;
+  private provider: LlmProvider;
+  private detachUnload: (() => void) | null = null;
+  private anonymized: AnonymizeResult | null = null;
+  private deanonymizeOutput: boolean;
+  private ner: NerEngine = new RulesOnlyNer();
+  private enableNer: boolean;
 
-export async function explicarFromPdfBytes(
-  bytes: ArrayBuffer | Uint8Array,
-  options?: { generate?: LlmTextFn },
-) {
-  const extracted = await extractPdfText(bytes);
-  const summary = await summarizeDocument(
-    extracted.text.slice(0, INTRO_TEXT_CHARS),
-    { generate: options?.generate },
-  );
-  const welcome = welcomeMessage(summary);
-  return {
-    text: extracted.text,
-    truncated: extracted.truncated,
-    pageCount: extracted.pageCount,
-    summary,
-    welcome,
-  };
-}
-
-export async function explicarFromText(
-  text: string,
-  options?: { generate?: LlmTextFn },
-) {
-  const clipped = text.trim().slice(0, INTRO_TEXT_CHARS);
-  const summary = await summarizeDocument(clipped, {
-    generate: options?.generate,
-  });
-  return {
-    text: text.trim(),
-    truncated: false,
-    pageCount: 0,
-    summary,
-    welcome: welcomeMessage(summary),
-  };
-}
-
-export function resolveUserPrompt(input: {
-  action?: QuickAction | "custom";
-  prompt?: string;
-}): { kind: "static"; text: string } | { kind: "llm"; text: string } {
-  if (input.action === "contacto") {
-    return { kind: "static", text: QUICK_ACTIONS.contacto };
-  }
-  if (input.action && input.action !== "custom") {
-    return { kind: "llm", text: QUICK_ACTIONS[input.action] };
-  }
-  if (input.prompt?.trim()) {
-    return { kind: "llm", text: input.prompt.trim() };
-  }
-  throw new Error("Falta action o prompt.");
-}
-
-export async function chatOnce(args: {
-  pdfText: string;
-  messages: ChatMessage[];
-  action?: QuickAction | "custom";
-  prompt?: string;
-  generate?: LlmTextFn;
-}): Promise<{ role: "assistant"; content: string }> {
-  const resolved = resolveUserPrompt({
-    action: args.action,
-    prompt: args.prompt,
-  });
-  if (resolved.kind === "static") {
-    return { role: "assistant", content: resolved.text };
+  constructor(options: ExplicadorOptions = {}) {
+    this.provider = options.provider ?? new WebLlmProvider();
+    this.session = createEmptySession(options.modelId ?? DEFAULT_MODEL_ID);
+    this.deanonymizeOutput = options.deanonymizeOutput ?? false;
+    this.enableNer = options.enableNer ?? false;
   }
 
-  const history = toModelMessages(args.messages);
-  history.push({ role: "user", content: resolved.text });
-  const content = await generateExplanation({
-    pdfText: args.pdfText,
-    messages: history,
-    generate: args.generate,
-  });
-  return { role: "assistant", content };
-}
-
-export async function chatStream(args: {
-  pdfText: string;
-  messages: ChatMessage[];
-  action?: QuickAction | "custom";
-  prompt?: string;
-}) {
-  const resolved = resolveUserPrompt({
-    action: args.action,
-    prompt: args.prompt,
-  });
-  if (resolved.kind === "static") {
-    return { kind: "static" as const, text: resolved.text };
+  getState(): Readonly<SessionState> {
+    return this.session;
   }
-  const history = toModelMessages(args.messages);
-  history.push({ role: "user", content: resolved.text });
-  const result = await streamExplanation({
-    pdfText: args.pdfText,
-    messages: history,
-  });
-  return { kind: "stream" as const, result };
+
+  getAnonymizeResult(): AnonymizeResult | null {
+    return this.anonymized;
+  }
+
+  async ensureWebGpu() {
+    return checkWebGpu();
+  }
+
+  async loadModel(onProgress?: (p: LoadProgress) => void, modelId?: string) {
+    const gpu = await checkWebGpu();
+    if (!gpu.ok) throw new Error(gpu.message);
+    const id = modelId ?? this.session.modelId ?? DEFAULT_MODEL_ID;
+    this.session.modelId = id;
+    await this.provider.load(id, onProgress);
+  }
+
+  async ingestPdf(file: File | ArrayBuffer | Uint8Array) {
+    const bytes =
+      file instanceof File ? new Uint8Array(await file.arrayBuffer()) : file;
+    const extracted = await extractPdfText(bytes);
+    return await this.ingestText(extracted.text);
+  }
+
+  async ensureNer(onProgress?: (msg: string) => void): Promise<void> {
+    if (!this.enableNer) return;
+    if (this.ner.kind === "transformers" && this.ner.isReady()) return;
+    const loaded = await tryCreateTransformersNer(onProgress);
+    this.ner = loaded ?? new RulesOnlyNer();
+  }
+
+  async ingestText(text: string): Promise<AnonymizeResult> {
+    this.session.rawText = text;
+    await this.ensureNer();
+    this.anonymized = await anonymizeTextAsync(text, { ner: this.ner });
+    this.session.anonymizedText = this.anonymized.text;
+    this.session.lexicon = { ...this.anonymized.lexicon };
+    this.session.messages = [];
+    this.session.lastAssistant = "";
+    return this.anonymized;
+  }
+
+  /** El usuario confirma (o corrige) el texto anonimizado antes del modelo. */
+  confirmAnonymizedText(text: string, lexicon?: Record<string, string>) {
+    this.session.anonymizedText = text;
+    if (lexicon) this.session.lexicon = { ...lexicon };
+  }
+
+  async summarizeConfirmed(): Promise<string> {
+    const snippet = this.session.anonymizedText.slice(0, 4_000);
+    const summary = await this.provider.chat([
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: introPrompt(snippet) },
+    ]);
+    const welcome = welcomeMessage(summary);
+    this.session.messages = [{ role: "assistant", content: welcome }];
+    this.session.lastAssistant = welcome;
+    return welcome;
+  }
+
+  async ask(opts: {
+    action?: QuickAction | "custom";
+    prompt?: string;
+  }): Promise<string> {
+    if (opts.action === "contacto") {
+      const content = QUICK_ACTIONS.contacto;
+      this.push("user", "Necesito hablar con alguien");
+      this.push("assistant", content);
+      return content;
+    }
+
+    const userText =
+      opts.action && opts.action !== "custom"
+        ? QUICK_ACTIONS[opts.action]
+        : opts.prompt?.trim();
+    if (!userText) throw new Error("Falta action o prompt.");
+
+    this.push("user", userText);
+
+    const answer = await this.runWithChunking(userText);
+    const finalText = this.deanonymizeOutput
+      ? deanonymizeText(answer, this.session.lexicon)
+      : answer;
+    this.push("assistant", finalText);
+    return finalText;
+  }
+
+  private async runWithChunking(userText: string): Promise<string> {
+    const chunks = chunkText(this.session.anonymizedText);
+    if (chunks.length <= 1) {
+      return this.provider.chat([
+        {
+          role: "system",
+          content: `${SYSTEM_PROMPT}\n\nCONTEXTO:\n${this.session.anonymizedText}`,
+        },
+        ...this.session.messages
+          .slice(0, -1)
+          .map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: userText },
+      ]);
+    }
+
+    const partials: string[] = [];
+    for (const chunk of chunks) {
+      const summary = await this.provider.chat([
+        { role: "system", content: SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: buildChunkSummaryPrompt(chunk, chunks.length),
+        },
+      ]);
+      partials.push(summary);
+    }
+    return this.provider.chat([
+      { role: "system", content: SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: `${buildSynthesisPrompt(partials)}\n\nPedido del usuario: ${userText}`,
+      },
+    ]);
+  }
+
+  async exportPdf(text?: string): Promise<Uint8Array> {
+    const body = text ?? this.session.lastAssistant;
+    if (!body) throw new Error("No hay explicación para exportar.");
+    return buildExplanationPdf({ text: body });
+  }
+
+  enableUnloadGuard() {
+    this.detachUnload?.();
+    this.detachUnload = attachUnloadCleanup(() => {
+      void this.clearAll();
+    });
+  }
+
+  async clearAll() {
+    wipeSession(this.session);
+    this.anonymized = null;
+    this.provider.abort();
+    await this.provider.dispose();
+    await this.ner.dispose?.();
+    this.ner = new RulesOnlyNer();
+  }
+
+  private push(role: ChatTurn["role"], content: string) {
+    this.session.messages.push({ role, content });
+    if (role === "assistant") this.session.lastAssistant = content;
+  }
 }
 
-export async function explanationToPdf(text: string, title?: string) {
-  return buildExplanationPdf({ text, title });
-}
+export { QUICK_ACTIONS, DEFAULT_MODEL_ID };

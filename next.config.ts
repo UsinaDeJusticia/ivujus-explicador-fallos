@@ -1,9 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
+  output: "export",
   turbopack: {
     rules: {
       "*.css": {
@@ -12,6 +10,8 @@ const nextConfig: NextConfig = {
       },
     },
   },
+  // transformers.js: evitar que el bundler intente meter onnxruntime-node
+  serverExternalPackages: ["onnxruntime-node", "sharp"],
 };
 
 export default nextConfig;
