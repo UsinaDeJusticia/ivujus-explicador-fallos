@@ -11,7 +11,7 @@ import {
   buildSynthesisPrompt,
   chunkText,
 } from "./chunking";
-import { DEFAULT_MODEL_ID } from "./models";
+import { DEFAULT_MODEL_ID, LIGHT_MODEL_ID, MAX_REDUCED_TEXT_CHARS } from "./models";
 import { extractPdfText } from "./pdf-extract";
 import { buildExplanationPdf } from "./pdf-generate";
 import {
@@ -29,7 +29,8 @@ import {
   type SessionState,
 } from "./session";
 import { checkWebGpu } from "./webgpu";
-import type { LlmProvider, LoadProgress } from "./llm/types";
+import type { ChatOptions, LlmProvider, LoadProgress } from "./llm/types";
+import { OpenRouterProvider } from "./llm/openrouter-provider";
 import { WebLlmProvider } from "./llm/webllm-provider";
 
 export type ExplicadorOptions = {
@@ -45,8 +46,9 @@ export type ExplicadorOptions = {
 };
 
 /**
- * API programática para integrar desde otra página (mismo origen / bundler).
- * Todo corre en el cliente; no hay llamadas a servidores de IA.
+ * API programática para integrar desde otra página.
+ * Default: OpenRouter/Gemma vía `/api/llm` (solo texto reducido, con consentimiento).
+ * Opcional: WebLLM local (WebGPU).
  */
 export class Explicador {
   private session: SessionState;
@@ -56,9 +58,10 @@ export class Explicador {
   private deanonymizeOutput: boolean;
   private ner: NerEngine = new RulesOnlyNer();
   private enableNer: boolean;
+  private consentAccepted = false;
 
   constructor(options: ExplicadorOptions = {}) {
-    this.provider = options.provider ?? new WebLlmProvider();
+    this.provider = options.provider ?? new OpenRouterProvider();
     this.session = createEmptySession(options.modelId ?? DEFAULT_MODEL_ID);
     this.deanonymizeOutput = options.deanonymizeOutput ?? false;
     this.enableNer = options.enableNer ?? false;
@@ -72,15 +75,51 @@ export class Explicador {
     return this.anonymized;
   }
 
+  getProviderKind(): LlmProvider["kind"] {
+    return this.provider.kind;
+  }
+
+  hasConsent(): boolean {
+    return this.consentAccepted;
+  }
+
+  /** Consentimiento explícito antes del primer envío a OpenRouter. */
+  acceptConsent(): void {
+    this.consentAccepted = true;
+  }
+
+  setProvider(provider: LlmProvider, modelId?: string) {
+    this.provider.abort();
+    void this.provider.dispose();
+    this.provider = provider;
+    if (modelId) this.session.modelId = modelId;
+  }
+
+  /** Cambia a WebLLM local (opcional) o vuelve a OpenRouter. */
+  useLocalWebLlm(modelId = LIGHT_MODEL_ID) {
+    this.setProvider(new WebLlmProvider(), modelId);
+  }
+
+  useOpenRouter(modelId = DEFAULT_MODEL_ID) {
+    this.setProvider(new OpenRouterProvider(), modelId);
+  }
+
   async ensureWebGpu() {
     return checkWebGpu();
   }
 
   async loadModel(onProgress?: (p: LoadProgress) => void, modelId?: string) {
-    const gpu = await checkWebGpu();
-    if (!gpu.ok) throw new Error(gpu.message);
     const id = modelId ?? this.session.modelId ?? DEFAULT_MODEL_ID;
     this.session.modelId = id;
+    if (this.provider.kind === "openrouter") {
+      onProgress?.({ progress: 1, text: "Listo (OpenRouter / Gemma)." });
+      return;
+    }
+    const gpu = await checkWebGpu();
+    if (!gpu.ok) throw new Error(gpu.message);
+    if (!this.provider.load) {
+      throw new Error("Este proveedor no soporta carga local.");
+    }
     await this.provider.load(id, onProgress);
   }
 
@@ -111,16 +150,37 @@ export class Explicador {
 
   /** El usuario confirma (o corrige) el texto anonimizado antes del modelo. */
   confirmAnonymizedText(text: string, lexicon?: Record<string, string>) {
+    if (text.length > MAX_REDUCED_TEXT_CHARS) {
+      throw new Error(
+        `El texto reducido supera el máximo de ${MAX_REDUCED_TEXT_CHARS} caracteres.`,
+      );
+    }
     this.session.anonymizedText = text;
     if (lexicon) this.session.lexicon = { ...lexicon };
   }
 
+  private chatOpts(): ChatOptions {
+    return {
+      temperature: 0.3,
+      consent: this.consentAccepted || this.provider.kind === "webllm",
+      reducedOnly: true,
+    };
+  }
+
   async summarizeConfirmed(): Promise<string> {
+    if (this.provider.kind === "openrouter" && !this.consentAccepted) {
+      throw new Error(
+        "Antes de enviar tenés que aceptar el aviso de consentimiento.",
+      );
+    }
     const snippet = this.session.anonymizedText.slice(0, 4_000);
-    const summary = await this.provider.chat([
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: introPrompt(snippet) },
-    ]);
+    const summary = await this.provider.chat(
+      [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: introPrompt(snippet) },
+      ],
+      this.chatOpts(),
+    );
     const welcome = welcomeMessage(summary);
     this.session.messages = [{ role: "assistant", content: welcome }];
     this.session.lastAssistant = welcome;
@@ -146,7 +206,7 @@ export class Explicador {
 
     this.push("user", userText);
 
-    const answer = await this.runWithChunking(userText);
+    const answer = await this.runWithContext(userText);
     const finalText = this.deanonymizeOutput
       ? deanonymizeText(answer, this.session.lexicon)
       : answer;
@@ -154,39 +214,53 @@ export class Explicador {
     return finalText;
   }
 
-  private async runWithChunking(userText: string): Promise<string> {
+  /**
+   * Con Gemma (262k) casi nunca hace falta chunking.
+   * Solo se parte si el texto reducido supera el presupuesto razonable.
+   */
+  private async runWithContext(userText: string): Promise<string> {
+    const opts = this.chatOpts();
     const chunks = chunkText(this.session.anonymizedText);
     if (chunks.length <= 1) {
-      return this.provider.chat([
-        {
-          role: "system",
-          content: `${SYSTEM_PROMPT}\n\nCONTEXTO:\n${this.session.anonymizedText}`,
-        },
-        ...this.session.messages
-          .slice(0, -1)
-          .map((m) => ({ role: m.role, content: m.content })),
-        { role: "user", content: userText },
-      ]);
+      return this.provider.chat(
+        [
+          {
+            role: "system",
+            content: `${SYSTEM_PROMPT}\n\nCONTEXTO:\n${this.session.anonymizedText}`,
+          },
+          ...this.session.messages
+            .slice(0, -1)
+            .map((m) => ({ role: m.role, content: m.content })),
+          { role: "user", content: userText },
+        ],
+        opts,
+      );
     }
 
     const partials: string[] = [];
     for (const chunk of chunks) {
-      const summary = await this.provider.chat([
+      const summary = await this.provider.chat(
+        [
+          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: buildChunkSummaryPrompt(chunk, chunks.length),
+          },
+        ],
+        opts,
+      );
+      partials.push(summary);
+    }
+    return this.provider.chat(
+      [
         { role: "system", content: SYSTEM_PROMPT },
         {
           role: "user",
-          content: buildChunkSummaryPrompt(chunk, chunks.length),
+          content: `${buildSynthesisPrompt(partials)}\n\nPedido del usuario: ${userText}`,
         },
-      ]);
-      partials.push(summary);
-    }
-    return this.provider.chat([
-      { role: "system", content: SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: `${buildSynthesisPrompt(partials)}\n\nPedido del usuario: ${userText}`,
-      },
-    ]);
+      ],
+      opts,
+    );
   }
 
   async exportPdf(text?: string): Promise<Uint8Array> {
@@ -205,6 +279,7 @@ export class Explicador {
   async clearAll() {
     wipeSession(this.session);
     this.anonymized = null;
+    this.consentAccepted = false;
     this.provider.abort();
     await this.provider.dispose();
     await this.ner.dispose?.();

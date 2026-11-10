@@ -5,22 +5,35 @@ import { Explicador } from "@/lib/explicador";
 import type { AnonymizeResult } from "@/lib/anonymize";
 import type { ChatTurn } from "@/lib/session";
 import type { LoadProgress } from "@/lib/llm/types";
-import { DEFAULT_MODEL_ID, MODEL_OPTIONS } from "@/lib/models";
+import {
+  DEFAULT_MODEL_ID,
+  LIGHT_MODEL_ID,
+  MODEL_OPTIONS,
+} from "@/lib/models";
 import type { QuickAction } from "@/lib/prompts";
 import { checkWebGpu, type WebGpuStatus } from "@/lib/webgpu";
+
+function isLocalModel(id: string) {
+  return MODEL_OPTIONS.find((m) => m.id === id)?.tier === "light";
+}
 
 export function useExplicador(initialModelId = DEFAULT_MODEL_ID) {
   const ref = useRef<Explicador | null>(null);
   const [webgpu, setWebgpu] = useState<WebGpuStatus | null>(null);
-  const [modelId, setModelId] = useState(initialModelId);
-  const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
-  const [ready, setReady] = useState(false);
+  const [modelId, setModelIdState] = useState(initialModelId);
+  const [loadProgress, setLoadProgress] = useState<LoadProgress | null>({
+    progress: 1,
+    text: "Listo (OpenRouter / Gemma).",
+  });
+  const [ready, setReady] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [anonymized, setAnonymized] = useState<AnonymizeResult | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [consent, setConsent] = useState(false);
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [lastAssistant, setLastAssistant] = useState("");
+  const [mode, setMode] = useState<"openrouter" | "webllm">("openrouter");
 
   useEffect(() => {
     const engine = new Explicador({ modelId: initialModelId });
@@ -41,6 +54,22 @@ export function useExplicador(initialModelId = DEFAULT_MODEL_ID) {
     setLastAssistant(s.lastAssistant);
   }, []);
 
+  const setModelId = useCallback((id: string) => {
+    setModelIdState(id);
+    if (!ref.current) return;
+    if (isLocalModel(id)) {
+      ref.current.useLocalWebLlm(id || LIGHT_MODEL_ID);
+      setMode("webllm");
+      setReady(false);
+      setLoadProgress(null);
+    } else {
+      ref.current.useOpenRouter(id || DEFAULT_MODEL_ID);
+      setMode("openrouter");
+      setReady(true);
+      setLoadProgress({ progress: 1, text: "Listo (OpenRouter / Gemma)." });
+    }
+  }, []);
+
   const loadModel = useCallback(
     async (id = modelId) => {
       if (!ref.current) return;
@@ -48,11 +77,18 @@ export function useExplicador(initialModelId = DEFAULT_MODEL_ID) {
       setError(null);
       setLoadProgress({ progress: 0, text: "Preparando modelo…" });
       try {
-        const gpu = await ref.current.ensureWebGpu();
-        setWebgpu(gpu);
-        if (!gpu.ok) throw new Error(gpu.message);
+        if (isLocalModel(id)) {
+          const gpu = await ref.current.ensureWebGpu();
+          setWebgpu(gpu);
+          if (!gpu.ok) throw new Error(gpu.message);
+          ref.current.useLocalWebLlm(id);
+          setMode("webllm");
+        } else {
+          ref.current.useOpenRouter(id);
+          setMode("openrouter");
+        }
         await ref.current.loadModel((p) => setLoadProgress(p), id);
-        setModelId(id);
+        setModelIdState(id);
         setReady(true);
       } catch (e) {
         setReady(false);
@@ -85,21 +121,31 @@ export function useExplicador(initialModelId = DEFAULT_MODEL_ID) {
   const confirmAnonymized = useCallback(
     async (text: string, lexicon: Record<string, string>) => {
       if (!ref.current) return;
-      ref.current.confirmAnonymizedText(text, lexicon);
-      setConfirmed(true);
+      if (mode === "openrouter" && !consent) {
+        setError(
+          "Tenés que aceptar el aviso de consentimiento antes de enviar el texto reducido.",
+        );
+        return;
+      }
       setBusy(true);
       setError(null);
       try {
+        if (mode === "openrouter") {
+          ref.current.acceptConsent();
+        }
+        ref.current.confirmAnonymizedText(text, lexicon);
+        setConfirmed(true);
         if (!ready) await loadModel();
         await ref.current.summarizeConfirmed();
         sync();
       } catch (e) {
+        setConfirmed(false);
         setError(e instanceof Error ? e.message : "Error al resumir");
       } finally {
         setBusy(false);
       }
     },
-    [loadModel, ready, sync],
+    [consent, loadModel, mode, ready, sync],
   );
 
   const ask = useCallback(
@@ -144,10 +190,12 @@ export function useExplicador(initialModelId = DEFAULT_MODEL_ID) {
     await ref.current?.clearAll();
     setAnonymized(null);
     setConfirmed(false);
+    setConsent(false);
     setMessages([]);
     setLastAssistant("");
-    setReady(false);
-    setLoadProgress(null);
+    setMode("openrouter");
+    setReady(true);
+    setLoadProgress({ progress: 1, text: "Listo (OpenRouter / Gemma)." });
     setError(null);
   }, []);
 
@@ -156,12 +204,15 @@ export function useExplicador(initialModelId = DEFAULT_MODEL_ID) {
     modelId,
     setModelId,
     models: MODEL_OPTIONS,
+    mode,
     loadProgress,
     ready,
     busy,
     error,
     anonymized,
     confirmed,
+    consent,
+    setConsent,
     messages,
     lastAssistant,
     loadModel,

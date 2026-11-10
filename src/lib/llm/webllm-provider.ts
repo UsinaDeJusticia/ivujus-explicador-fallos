@@ -2,7 +2,7 @@ import {
   CreateWebWorkerMLCEngine,
   type MLCEngineInterface,
 } from "@mlc-ai/web-llm";
-import type { ChatMessage, LlmProvider, LoadProgress } from "./types";
+import type { ChatMessage, ChatOptions, LlmProvider, LoadProgress } from "./types";
 
 export class WebLlmProvider implements LlmProvider {
   readonly kind = "webllm" as const;
@@ -35,10 +35,7 @@ export class WebLlmProvider implements LlmProvider {
     }
   }
 
-  async chat(
-    messages: ChatMessage[],
-    opts?: { temperature?: number },
-  ): Promise<string> {
+  async chat(messages: ChatMessage[], opts?: ChatOptions): Promise<string> {
     if (!this.engine) {
       throw new Error("El modelo todavía no está cargado.");
     }

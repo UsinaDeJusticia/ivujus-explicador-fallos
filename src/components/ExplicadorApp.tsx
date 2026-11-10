@@ -17,7 +17,8 @@ export function ExplicadorApp() {
   const [lexiconJson, setLexiconJson] = useState("{}");
   const [input, setInput] = useState("");
 
-  const gpuBlocked = ex.webgpu && !ex.webgpu.ok;
+  const localMode = ex.mode === "webllm";
+  const gpuBlocked = localMode && ex.webgpu && !ex.webgpu.ok;
   const redactionCount = useMemo(
     () => ex.anonymized?.redactions.length ?? 0,
     [ex.anonymized],
@@ -33,8 +34,11 @@ export function ExplicadorApp() {
           Asistente de Justicia Humana
         </h1>
         <p className="text-zinc-600">
-          Todo corre en tu navegador. El fallo no se sube a ningún servidor de
-          IA. Solo se bajan los pesos del modelo (Cache Storage de WebLLM).
+          El PDF se lee en tu navegador. Antes de explicar, se reduce la
+          información personal y vos revisás el texto. Solo ese texto reducido
+          (nunca el PDF) viaja a nuestro servidor y a OpenRouter → Google AI
+          Studio (Gemma), que puede retenerlo hasta 55 días sin usarlo para
+          entrenar. También podés elegir un modelo local opcional (WebLLM).
         </p>
       </header>
 
@@ -44,34 +48,46 @@ export function ExplicadorApp() {
           role="alert"
         >
           <p className="font-semibold">WebGPU no disponible</p>
-          <p className="mt-1">{ex.webgpu && !ex.webgpu.ok ? ex.webgpu.message : ""}</p>
+          <p className="mt-1">
+            {ex.webgpu && !ex.webgpu.ok ? ex.webgpu.message : ""}
+          </p>
+          <p className="mt-1">
+            Volvé al modo Gemma (OpenRouter) o usá Chrome/Edge con WebGPU.
+          </p>
         </div>
       ) : null}
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm space-y-3">
         <label className="block text-sm font-medium text-zinc-800">
-          Modelo local
+          Proveedor / modelo
           <select
             className="mt-2 w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm"
             value={ex.modelId}
-            disabled={ex.busy || !!gpuBlocked}
+            disabled={ex.busy}
             onChange={(e) => ex.setModelId(e.target.value)}
           >
             {ex.models.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.label} (~{m.approxDownloadMB} MB)
+                {m.label}
+                {m.approxDownloadMB ? ` (~${m.approxDownloadMB} MB)` : ""}
               </option>
             ))}
           </select>
         </label>
-        <button
-          type="button"
-          disabled={ex.busy || !!gpuBlocked || ex.ready}
-          onClick={() => void ex.loadModel()}
-          className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-        >
-          {ex.ready ? "Modelo listo" : "Descargar / cargar modelo"}
-        </button>
+        {localMode ? (
+          <button
+            type="button"
+            disabled={ex.busy || !!gpuBlocked || ex.ready}
+            onClick={() => void ex.loadModel()}
+            className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {ex.ready ? "Modelo local listo" : "Descargar / cargar modelo local"}
+          </button>
+        ) : (
+          <p className="text-sm text-zinc-600">
+            Modo por defecto: Gemma 4 vía OpenRouter (sin descargar pesos).
+          </p>
+        )}
         {ex.loadProgress ? (
           <div className="text-sm text-zinc-600">
             <div className="mb-1 h-2 overflow-hidden rounded bg-zinc-100">
@@ -89,7 +105,7 @@ export function ExplicadorApp() {
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
         <label className="block text-sm font-medium text-zinc-800">
-          Cargá el documento PDF (solo en memoria)
+          Cargá el documento PDF (se parsea solo en el navegador)
           <input
             type="file"
             accept="application/pdf"
@@ -120,9 +136,9 @@ export function ExplicadorApp() {
           </h2>
           <p className="text-sm text-zinc-700">
             Esto es una <strong>reducción de datos personales</strong>, no una
-            anonimización total. Antes de mandar el texto al modelo local,
-            corregí placeholders o devolvé datos si se tapó de más. Nada se
-            guarda en disco.
+            anonimización total. Antes de enviar, corregí placeholders o
+            devolvé datos si se tapó de más. Al servidor solo viaja este texto
+            ya reducido: nunca el PDF ni el original.
           </p>
           {ex.anonymized?.notice ? (
             <p className="text-xs text-violet-900">{ex.anonymized.notice}</p>
@@ -140,9 +156,36 @@ export function ExplicadorApp() {
               onChange={(e) => setLexiconJson(e.target.value)}
             />
           </details>
+
+          {!localMode ? (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+              <p className="font-semibold">Aviso de consentimiento</p>
+              <p className="mt-2">
+                Al continuar, el <strong>texto ya reducido</strong> se envía a
+                nuestro servidor y de ahí a <strong>OpenRouter</strong> y{" "}
+                <strong>Google AI Studio</strong> (modelo Gemma). Esos
+                proveedores pueden retener el contenido hasta{" "}
+                <strong>55 días</strong> y <strong>no lo usan para entrenar</strong>.
+                No se envía el PDF ni el texto original sin reducir.
+              </p>
+              <label className="mt-3 flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={ex.consent}
+                  onChange={(e) => ex.setConsent(e.target.checked)}
+                />
+                <span>
+                  Entiendo y acepto enviar el texto reducido a OpenRouter /
+                  Google AI Studio.
+                </span>
+              </label>
+            </div>
+          ) : null}
+
           <button
             type="button"
-            disabled={ex.busy}
+            disabled={ex.busy || (!localMode && !ex.consent)}
             className="rounded-xl bg-violet-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             onClick={() => {
               let lexicon: Record<string, string> = {};

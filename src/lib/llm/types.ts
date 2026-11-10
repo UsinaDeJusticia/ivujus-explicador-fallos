@@ -8,30 +8,24 @@ export type LoadProgress = {
   text: string;
 };
 
+export type ChatOptions = {
+  temperature?: number;
+  /** Consentimiento explícito para enviar texto reducido a OpenRouter. */
+  consent?: boolean;
+  /** Confirma que messages solo contienen texto reducido. */
+  reducedOnly?: boolean;
+  onRetry?: (attempt: number, retryAfterSec: number) => void;
+};
+
 /**
  * Adaptador de proveedor LLM.
- * Hoy solo se implementa WebLLM en el cliente.
- * Un futuro modo servidor debería exigir consentimiento explícito
- * y NUNCA ser el default (no implementado acá).
+ * Default: OpenRouter (Gemma) vía `/api/llm` (servidor).
+ * Opcional: WebLLM local.
  */
 export interface LlmProvider {
-  readonly kind: "webllm" | "server-opt-in";
-  load(modelId: string, onProgress?: (p: LoadProgress) => void): Promise<void>;
-  chat(messages: ChatMessage[], opts?: { temperature?: number }): Promise<string>;
+  readonly kind: "openrouter" | "webllm";
+  load?(modelId: string, onProgress?: (p: LoadProgress) => void): Promise<void>;
+  chat(messages: ChatMessage[], opts?: ChatOptions): Promise<string>;
   abort(): void;
   dispose(): Promise<void>;
-}
-
-export class ServerProviderNotImplemented implements LlmProvider {
-  readonly kind = "server-opt-in" as const;
-  async load(): Promise<void> {
-    throw new Error(
-      "El modo servidor no está implementado. Todo corre en el navegador con WebLLM.",
-    );
-  }
-  async chat(): Promise<string> {
-    throw new Error("El modo servidor no está implementado.");
-  }
-  abort(): void {}
-  async dispose(): Promise<void> {}
 }
