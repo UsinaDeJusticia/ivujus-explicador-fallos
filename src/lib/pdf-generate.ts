@@ -1,16 +1,21 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { PDFDocument, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { MAX_EXPLANATION_CHARS } from "./config";
+
+export const MAX_EXPLANATION_CHARS = 20_000;
 
 async function loadFontBytes(): Promise<Uint8Array> {
-  const fontPath = path.join(
-    process.cwd(),
-    "src/lib/assets/NotoSans-Regular.ttf",
-  );
-  const buf = await readFile(fontPath);
-  return new Uint8Array(buf);
+  const isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
+  if (!isBrowser) {
+    const { readFile } = await import("node:fs/promises");
+    const path = await import("node:path");
+    const buf = await readFile(
+      path.join(process.cwd(), "public/fonts/NotoSans-Regular.ttf"),
+    );
+    return new Uint8Array(buf);
+  }
+  const res = await fetch("/fonts/NotoSans-Regular.ttf");
+  if (!res.ok) throw new Error("No se pudo cargar la fuente Noto Sans.");
+  return new Uint8Array(await res.arrayBuffer());
 }
 
 function wrapLines(text: string, maxChars: number): string[] {
@@ -46,9 +51,7 @@ export async function buildExplanationPdf(options: {
 
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
-
-  const fontBytes = await loadFontBytes();
-  const font = await pdfDoc.embedFont(fontBytes, { subset: true });
+  const font = await pdfDoc.embedFont(await loadFontBytes(), { subset: true });
 
   const margin = 50;
   const fontSizeTitle = 14;
@@ -83,10 +86,8 @@ export async function buildExplanationPdf(options: {
 
   drawLine(title, fontSizeTitle, true);
   y -= 8;
-
   for (const line of wrapLines(body, charsPerLine)) {
     drawLine(line, fontSizeBody);
   }
-
   return pdfDoc.save();
 }

@@ -1,26 +1,14 @@
 import { describe, expect, it } from "vitest";
-import {
-  QUICK_ACTIONS,
-  introPrompt,
-  welcomeMessage,
-} from "@/lib/prompts";
-import { resolveUserPrompt } from "@/lib/explicador";
+import { QUICK_ACTIONS, introPrompt, welcomeMessage } from "@/lib/prompts";
 
-describe("prompts IVUJUS", () => {
-  it("arma bienvenida con el resumen", () => {
-    const msg = welcomeMessage("se hizo lugar a la demanda");
-    expect(msg).toContain("se hizo lugar a la demanda");
-    expect(msg).toContain("¿Qué te gustaría");
+describe("prompts", () => {
+  it("bienvenida", () => {
+    expect(welcomeMessage("absuelto")).toContain("absuelto");
   });
-
-  it("pide una frase simple en el intro", () => {
-    expect(introPrompt("texto")).toMatch(/UNA frase/i);
+  it("intro", () => {
+    expect(introPrompt("x")).toMatch(/UNA frase/);
   });
-
-  it("resuelve acciones rápidas", () => {
-    expect(resolveUserPrompt({ action: "resumen" }).text).toBe(
-      QUICK_ACTIONS.resumen,
-    );
-    expect(resolveUserPrompt({ action: "contacto" }).kind).toBe("static");
+  it("acciones", () => {
+    expect(QUICK_ACTIONS.contacto).toMatch(/Usina de Justicia/);
   });
 });

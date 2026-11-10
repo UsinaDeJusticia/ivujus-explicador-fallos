@@ -1,5 +1,4 @@
 import { extractText, getDocumentProxy } from "unpdf";
-import { MAX_PDF_BYTES, MAX_PDF_TEXT_CHARS } from "./config";
 
 export class PdfExtractError extends Error {
   constructor(
@@ -11,15 +10,19 @@ export class PdfExtractError extends Error {
   }
 }
 
+export const MAX_PDF_BYTES = 8 * 1024 * 1024;
+export const MAX_PDF_TEXT_CHARS = 80_000;
+
 export async function extractPdfText(
   data: ArrayBuffer | Uint8Array,
   options?: { maxBytes?: number; maxChars?: number },
 ): Promise<{ text: string; truncated: boolean; pageCount: number }> {
   const maxBytes = options?.maxBytes ?? MAX_PDF_BYTES;
   const maxChars = options?.maxChars ?? MAX_PDF_TEXT_CHARS;
-  const bytes = data instanceof Uint8Array
-    ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
-    : new Uint8Array(data);
+  const bytes =
+    data instanceof Uint8Array
+      ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+      : new Uint8Array(data);
 
   if (bytes.byteLength === 0) {
     throw new PdfExtractError("El PDF está vacío.", "EMPTY");
@@ -34,8 +37,7 @@ export async function extractPdfText(
   try {
     const pdf = await getDocumentProxy(bytes);
     const result = await extractText(pdf, { mergePages: true });
-    const raw = result.text.trim();
-    const cleaned = raw.replace(/\u0000/g, "").trim();
+    const cleaned = result.text.replace(/\u0000/g, "").trim();
     if (!cleaned) {
       throw new PdfExtractError(
         "No se pudo extraer texto del PDF (¿está escaneado sin OCR?).",
@@ -46,7 +48,7 @@ export async function extractPdfText(
     return {
       text: truncated ? cleaned.slice(0, maxChars) : cleaned,
       truncated,
-      pageCount: result.totalPages ?? pdf.numPages ?? 0,
+      pageCount: result.totalPages ?? 0,
     };
   } catch (err) {
     if (err instanceof PdfExtractError) throw err;

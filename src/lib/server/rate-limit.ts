@@ -1,7 +1,6 @@
 import { RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS } from "./config";
 
 type Bucket = { count: number; resetAt: number };
-
 const buckets = new Map<string, Bucket>();
 
 export function checkRateLimit(
@@ -25,7 +24,12 @@ export function checkRateLimit(
   return { ok: true };
 }
 
-/** Solo para tests. */
 export function resetRateLimitForTests(): void {
   buckets.clear();
+}
+
+export function clientIp(request: Request): string {
+  const xf = request.headers.get("x-forwarded-for");
+  if (xf) return xf.split(",")[0]?.trim() || "unknown";
+  return request.headers.get("x-real-ip") || "unknown";
 }
