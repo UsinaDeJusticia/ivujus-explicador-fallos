@@ -112,7 +112,7 @@ export class Explicador {
     const id = modelId ?? this.session.modelId ?? DEFAULT_MODEL_ID;
     this.session.modelId = id;
     if (this.provider.kind === "openrouter") {
-      onProgress?.({ progress: 1, text: "Listo (OpenRouter / Gemma)." });
+      onProgress?.({ progress: 1, text: "Listo para explicar." });
       return;
     }
     const gpu = await checkWebGpu();

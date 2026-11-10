@@ -23,7 +23,7 @@ export function useExplicador(initialModelId = DEFAULT_MODEL_ID) {
   const [modelId, setModelIdState] = useState(initialModelId);
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>({
     progress: 1,
-    text: "Listo (OpenRouter / Gemma).",
+    text: "Listo para explicar.",
   });
   const [ready, setReady] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -66,7 +66,7 @@ export function useExplicador(initialModelId = DEFAULT_MODEL_ID) {
       ref.current.useOpenRouter(id || DEFAULT_MODEL_ID);
       setMode("openrouter");
       setReady(true);
-      setLoadProgress({ progress: 1, text: "Listo (OpenRouter / Gemma)." });
+      setLoadProgress({ progress: 1, text: "Listo para explicar." });
     }
   }, []);
 
@@ -75,7 +75,7 @@ export function useExplicador(initialModelId = DEFAULT_MODEL_ID) {
       if (!ref.current) return;
       setBusy(true);
       setError(null);
-      setLoadProgress({ progress: 0, text: "Preparando modelo…" });
+      setLoadProgress({ progress: 0, text: "Preparando…" });
       try {
         if (isLocalModel(id)) {
           const gpu = await ref.current.ensureWebGpu();
@@ -195,7 +195,7 @@ export function useExplicador(initialModelId = DEFAULT_MODEL_ID) {
     setLastAssistant("");
     setMode("openrouter");
     setReady(true);
-    setLoadProgress({ progress: 1, text: "Listo (OpenRouter / Gemma)." });
+    setLoadProgress({ progress: 1, text: "Listo para explicar." });
     setError(null);
   }, []);
 

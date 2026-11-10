@@ -25,43 +25,40 @@ export function ExplicadorApp() {
   );
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 px-4 py-10">
+    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 px-4 py-10 text-zinc-900 dark:text-zinc-100">
       <header className="space-y-2">
-        <p className="text-sm font-medium text-blue-800">
+        <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
           IVUJUS · Usina de Justicia
         </p>
-        <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">
+        <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
           Asistente de Justicia Humana
         </h1>
-        <p className="text-zinc-600">
-          El PDF se lee en tu navegador. Antes de explicar, se reduce la
-          información personal y vos revisás el texto. Solo ese texto reducido
-          (nunca el PDF) viaja a nuestro servidor y a OpenRouter → Google AI
-          Studio (Gemma), que puede retenerlo hasta 55 días sin usarlo para
-          entrenar. También podés elegir un modelo local opcional (WebLLM).
+        <p className="text-zinc-700 dark:text-zinc-300">
+          Subí el PDF de tu fallo y te lo explicamos en palabras simples. Antes
+          de enviarlo, quitamos tus datos personales y podés revisar el texto.
         </p>
       </header>
 
       {gpuBlocked ? (
         <div
-          className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+          className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
           role="alert"
         >
-          <p className="font-semibold">WebGPU no disponible</p>
+          <p className="font-semibold">Este modo local no está disponible</p>
           <p className="mt-1">
             {ex.webgpu && !ex.webgpu.ok ? ex.webgpu.message : ""}
           </p>
           <p className="mt-1">
-            Volvé al modo Gemma (OpenRouter) o usá Chrome/Edge con WebGPU.
+            Elegí el modo en la nube o probá con Chrome o Edge actualizado.
           </p>
         </div>
       ) : null}
 
-      <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm space-y-3">
-        <label className="block text-sm font-medium text-zinc-800">
-          Proveedor / modelo
+      <section className="space-y-3 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+        <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+          Cómo generar la explicación
           <select
-            className="mt-2 w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm"
+            className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
             value={ex.modelId}
             disabled={ex.busy}
             onChange={(e) => ex.setModelId(e.target.value)}
@@ -79,20 +76,21 @@ export function ExplicadorApp() {
             type="button"
             disabled={ex.busy || !!gpuBlocked || ex.ready}
             onClick={() => void ex.loadModel()}
-            className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-blue-800/40 disabled:text-white/80 dark:bg-blue-600 dark:disabled:bg-blue-600/40"
           >
-            {ex.ready ? "Modelo local listo" : "Descargar / cargar modelo local"}
+            {ex.ready ? "Modo local listo" : "Preparar modo local"}
           </button>
         ) : (
-          <p className="text-sm text-zinc-600">
-            Modo por defecto: Gemma 4 vía OpenRouter (sin descargar pesos).
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            Modo recomendado: explicación en la nube (no hace falta descargar
+            nada).
           </p>
         )}
         {ex.loadProgress ? (
-          <div className="text-sm text-zinc-600">
-            <div className="mb-1 h-2 overflow-hidden rounded bg-zinc-100">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            <div className="mb-1 h-2 overflow-hidden rounded bg-zinc-100 dark:bg-zinc-800">
               <div
-                className="h-full bg-blue-700 transition-all"
+                className="h-full bg-blue-700 transition-all dark:bg-blue-500"
                 style={{
                   width: `${Math.round((ex.loadProgress.progress || 0) * 100)}%`,
                 }}
@@ -103,13 +101,13 @@ export function ExplicadorApp() {
         ) : null}
       </section>
 
-      <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <label className="block text-sm font-medium text-zinc-800">
-          Cargá el documento PDF (se parsea solo en el navegador)
+      <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+        <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+          Cargá el PDF de tu fallo
           <input
             type="file"
             accept="application/pdf"
-            className="mt-2 block w-full text-sm"
+            className="mt-2 block w-full text-sm text-zinc-800 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-zinc-800 dark:text-zinc-200 dark:file:bg-zinc-800 dark:file:text-zinc-100"
             disabled={ex.busy || !!gpuBlocked}
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -123,50 +121,48 @@ export function ExplicadorApp() {
           />
         </label>
         {ex.error ? (
-          <p className="mt-3 text-sm text-red-700" role="alert">
+          <p className="mt-3 text-sm text-red-700 dark:text-red-400" role="alert">
             {ex.error}
           </p>
         ) : null}
       </section>
 
       {ex.anonymized && !ex.confirmed ? (
-        <section className="space-y-3 rounded-2xl border border-violet-200 bg-violet-50 p-5">
-          <h2 className="text-lg font-semibold text-zinc-900">
-            Revisá la reducción de datos ({redactionCount} hallazgos)
+        <section className="space-y-3 rounded-2xl border border-violet-200 bg-violet-50 p-5 dark:border-violet-800 dark:bg-violet-950">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+            Revisá tus datos ({redactionCount} cambios)
           </h2>
-          <p className="text-sm text-zinc-700">
-            Esto es una <strong>reducción de datos personales</strong>, no una
-            anonimización total. Antes de enviar, corregí placeholders o
-            devolvé datos si se tapó de más. Al servidor solo viaja este texto
-            ya reducido: nunca el PDF ni el original.
+          <p className="text-sm text-zinc-700 dark:text-zinc-300">
+            Sacamos datos personales del texto. Revisalo y corregí lo que haga
+            falta. Solo se puede enviar este texto ya revisado, nunca el PDF
+            original.
           </p>
           {ex.anonymized?.notice ? (
-            <p className="text-xs text-violet-900">{ex.anonymized.notice}</p>
+            <p className="text-xs text-violet-900 dark:text-violet-200">
+              {ex.anonymized.notice}
+            </p>
           ) : null}
           <textarea
-            className="h-56 w-full rounded-xl border border-zinc-300 bg-white p-3 font-mono text-xs"
+            className="h-56 w-full rounded-xl border border-zinc-300 bg-white p-3 font-mono text-xs text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
           />
-          <details className="text-xs text-zinc-600">
-            <summary>Léxico (placeholder → original)</summary>
+          <details className="text-xs text-zinc-600 dark:text-zinc-400">
+            <summary>Lista de datos reemplazados</summary>
             <textarea
-              className="mt-2 h-40 w-full rounded-xl border border-zinc-300 bg-white p-2 font-mono"
+              className="mt-2 h-40 w-full rounded-xl border border-zinc-300 bg-white p-2 font-mono text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
               value={lexiconJson}
               onChange={(e) => setLexiconJson(e.target.value)}
             />
           </details>
 
           {!localMode ? (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
               <p className="font-semibold">Aviso de consentimiento</p>
               <p className="mt-2">
-                Al continuar, el <strong>texto ya reducido</strong> se envía a
-                nuestro servidor y de ahí a <strong>OpenRouter</strong> y{" "}
-                <strong>Google AI Studio</strong> (modelo Gemma). Esos
-                proveedores pueden retener el contenido hasta{" "}
-                <strong>55 días</strong> y <strong>no lo usan para entrenar</strong>.
-                No se envía el PDF ni el texto original sin reducir.
+                El texto anonimizado se enviará a un servicio externo de
+                inteligencia artificial para generar la explicación. Al
+                aceptar, consentís este envío.
               </p>
               <label className="mt-3 flex items-start gap-2">
                 <input
@@ -175,10 +171,7 @@ export function ExplicadorApp() {
                   checked={ex.consent}
                   onChange={(e) => ex.setConsent(e.target.checked)}
                 />
-                <span>
-                  Entiendo y acepto enviar el texto reducido a OpenRouter /
-                  Google AI Studio.
-                </span>
+                <span>Acepto el envío del texto anonimizado.</span>
               </label>
             </div>
           ) : null}
@@ -186,7 +179,7 @@ export function ExplicadorApp() {
           <button
             type="button"
             disabled={ex.busy || (!localMode && !ex.consent)}
-            className="rounded-xl bg-violet-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded-xl bg-violet-800 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-violet-800/40 disabled:text-white/80 dark:bg-violet-600 dark:disabled:bg-violet-600/40"
             onClick={() => {
               let lexicon: Record<string, string> = {};
               try {
@@ -212,7 +205,7 @@ export function ExplicadorApp() {
                   type="button"
                   disabled={ex.busy}
                   onClick={() => void ex.ask({ action: action.id })}
-                  className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-left text-sm font-medium hover:bg-zinc-100 disabled:opacity-50"
+                  className="rounded-xl border border-zinc-300 bg-zinc-100 px-3 py-3 text-left text-sm font-medium text-zinc-900 hover:bg-zinc-200 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 dark:disabled:border-zinc-700 dark:disabled:bg-zinc-900 dark:disabled:text-zinc-500"
                 >
                   {action.label}
                 </button>
@@ -220,17 +213,17 @@ export function ExplicadorApp() {
             </div>
           </section>
 
-          <section className="space-y-3 rounded-2xl border border-zinc-200 bg-white p-4">
+          <section className="space-y-3 rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-900">
             {ex.messages.map((m, i) => (
               <div
                 key={`${m.role}-${i}`}
                 className={
                   m.role === "assistant"
-                    ? "rounded-xl bg-blue-50 px-3 py-2 text-sm"
-                    : "rounded-xl bg-zinc-100 px-3 py-2 text-sm"
+                    ? "rounded-xl bg-blue-50 px-3 py-2 text-sm text-zinc-900 dark:bg-blue-950 dark:text-zinc-100"
+                    : "rounded-xl bg-zinc-100 px-3 py-2 text-sm text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
                 }
               >
-                <p className="mb-1 text-xs font-semibold uppercase text-zinc-500">
+                <p className="mb-1 text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
                   {m.role === "assistant" ? "IVUJUS" : "Vos"}
                 </p>
                 <div className="whitespace-pre-wrap">{m.content}</div>
@@ -251,12 +244,12 @@ export function ExplicadorApp() {
                 onChange={(e) => setInput(e.target.value)}
                 disabled={ex.busy}
                 placeholder="Escribí tu duda…"
-                className="flex-1 rounded-xl border border-zinc-300 px-3 py-2 text-sm"
+                className="flex-1 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 disabled:cursor-not-allowed disabled:opacity-70 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-400"
               />
               <button
                 type="submit"
                 disabled={ex.busy || !input.trim()}
-                className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-blue-800/40 disabled:text-white/80 dark:bg-blue-600 dark:disabled:bg-blue-600/40"
               >
                 Enviar
               </button>
@@ -267,7 +260,7 @@ export function ExplicadorApp() {
                 type="button"
                 disabled={ex.busy || !ex.lastAssistant}
                 onClick={() => void ex.downloadPdf()}
-                className="text-sm font-medium text-blue-800 underline disabled:opacity-50"
+                className="text-sm font-medium text-blue-800 underline disabled:cursor-not-allowed disabled:text-blue-800/50 dark:text-blue-300 dark:disabled:text-blue-300/50"
               >
                 Guardar explicación (PDF)
               </button>
@@ -275,7 +268,7 @@ export function ExplicadorApp() {
                 type="button"
                 disabled={ex.busy}
                 onClick={() => void ex.clearAll()}
-                className="text-sm font-medium text-red-700 underline disabled:opacity-50"
+                className="text-sm font-medium text-red-700 underline disabled:cursor-not-allowed disabled:text-red-700/50 dark:text-red-400 dark:disabled:text-red-400/50"
               >
                 Borrar todo
               </button>

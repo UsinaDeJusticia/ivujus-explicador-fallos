@@ -22,19 +22,19 @@ export type ModelOption = {
 export const MODEL_OPTIONS: ModelOption[] = [
   {
     id: DEFAULT_MODEL_ID,
-    label: "Gemma 4 31B (OpenRouter, gratis)",
+    label: "En la nube (recomendado)",
     tier: "cloud",
     notes: "Default. Texto reducido viaja a OpenRouter → Google AI Studio.",
   },
   {
     id: FALLBACK_MODEL_ID,
-    label: "Gemma 4 26B A4B (fallback gratis)",
+    label: "En la nube (alternativa)",
     tier: "cloud",
     notes: "Fallback automático si el 31B no responde.",
   },
   {
     id: "Qwen3-0.6B-q4f16_1-MLC",
-    label: "WebLLM local Qwen3 0.6B (opcional)",
+    label: "En tu dispositivo (opcional)",
     approxDownloadMB: 347,
     tier: "light",
     notes: "No sale del navegador. Requiere WebGPU.",
